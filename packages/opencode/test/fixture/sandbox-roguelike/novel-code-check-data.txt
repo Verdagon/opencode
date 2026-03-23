@@ -1,0 +1,26 @@
+## Your Response Format
+
+You must respond with ONLY valid JSON (no markdown fences) matching this schema:
+
+{
+  "decision": "allow" | "deny",
+  "reason": "Your explanation here"
+}
+
+## Important: How to Read the Diff
+
+You are reviewing a CODE CHANGE, not the entire file. The contextified diff uses these prefixes:
+- Lines starting with `+` are NEWLY ADDED code — focus your evaluation here.
+- Lines starting with `-` are REMOVED code — shown for context only, not part of the new code.
+- Lines with NO prefix are UNCHANGED existing code — shown for context.
+
+Focus primarily on the `+` (added) lines, but if you notice violations in the unchanged code within the same definition (function, struct, impl block, etc.), flag those too.
+
+## File Being Modified
+
+FILE: {{file_path}}
+
+CONTEXTIFIED DIFF (shows enclosing functions/structs around each change):
+```
+{{file_content}}
+```

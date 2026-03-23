@@ -80,7 +80,7 @@ export namespace LSPClient {
     connection.listen()
 
     l.info("sending initialize")
-    await withTimeout(
+    const initResult: any = await withTimeout(
       connection.sendRequest("initialize", {
         rootUri: pathToFileURL(input.root).href,
         processId: input.server.process.pid,
@@ -111,6 +111,16 @@ export namespace LSPClient {
             publishDiagnostics: {
               versionSupport: true,
             },
+            semanticTokens: {
+              dynamicRegistration: false,
+              tokenTypes: [],
+              tokenModifiers: [],
+              formats: ["relative"],
+              requests: { full: true },
+            },
+            documentSymbol: {
+              hierarchicalDocumentSymbolSupport: true,
+            },
           },
         },
       }),
@@ -124,6 +134,10 @@ export namespace LSPClient {
         },
       )
     })
+
+    const semanticTokensLegend = initResult?.capabilities?.semanticTokensProvider?.legend as
+      | { tokenTypes: string[]; tokenModifiers: string[] }
+      | undefined
 
     await connection.sendNotification("initialized", {})
 
@@ -144,6 +158,9 @@ export namespace LSPClient {
       },
       get connection() {
         return connection
+      },
+      get legend() {
+        return semanticTokensLegend
       },
       notify: {
         async open(input: { path: string }) {
@@ -202,6 +219,31 @@ export namespace LSPClient {
           })
           files[input.path] = 0
           return
+        },
+        /**
+         * Push virtual content to the LSP server without reading from disk.
+         * Opens the file if not already open, otherwise sends didChange.
+         */
+        async change(input: { path: string; content: string }) {
+          input.path = path.isAbsolute(input.path) ? input.path : path.resolve(Instance.directory, input.path)
+          const extension = path.extname(input.path)
+          const languageId = LANGUAGE_EXTENSIONS[extension] ?? "plaintext"
+          const uri = pathToFileURL(input.path).href
+
+          const version = files[input.path]
+          if (version !== undefined) {
+            const next = version + 1
+            files[input.path] = next
+            await connection.sendNotification("textDocument/didChange", {
+              textDocument: { uri, version: next },
+              contentChanges: [{ text: input.content }],
+            })
+          } else {
+            files[input.path] = 0
+            await connection.sendNotification("textDocument/didOpen", {
+              textDocument: { uri, languageId, version: 0, text: input.content },
+            })
+          }
         },
       },
       get diagnostics() {

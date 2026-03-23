@@ -1,0 +1,163 @@
+<sequence>
+  <step id="read-guidelines">
+    Please read the following files to understand the guidelines for this codebase:
+    - {{file:zen/impl.md}}
+    - {{file:zen/testing.md}}
+
+    When you're ready, respond with JSON {"ready": true}. If something went wrong, respond with {"ready":false,"reason":"(your words here)"}.
+
+    <format>{"type":"object","properties":{"ready":{"type":"boolean"},"reason":{"type":"string"}},"required":["ready"]}</format>
+  </step>
+  <switch on="ready"><case if="true" then="continue"/><case if="false" then="exit"/></switch>
+
+  <step id="analyze-target">
+    Today we should pay attention to specifically this part: {{input:target}}.
+
+    Please look over that part right now, look at:
+
+     1. What it calls.
+     2. What types it's using.
+     3. What it's doing.
+     4. What it used to look like (use `git diff HEAD {its file}`).
+
+    When you're ready, respond with JSON {"ready": true}. If something went wrong, respond with {"ready":false,"reason":"(your words here)"}.
+
+    <format>{"type":"object","properties":{"ready":{"type":"boolean"},"reason":{"type":"string"}},"required":["ready"]}</format>
+  </step>
+  <switch on="ready"><case if="true" then="continue"/><case if="false" then="exit"/></switch>
+
+  <parallel-split>
+    <branch>
+      <step id="check-impl-uusnncb">
+        Now check UUSNNCB for {{input:target}}.
+
+        Respond with JSON: {"check": "UUSNNCB", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+        <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+      </step>
+    </branch>
+
+    <branch>
+      <step id="check-impl-asfd">
+        Now check ASFD for {{input:target}}.
+
+        Respond with JSON: {"check": "ASFD", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+        <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+      </step>
+    </branch>
+
+    <branch>
+      <step id="check-impl-emninc">
+        Now check EMNINC for {{input:target}}.
+
+        Respond with JSON: {"check": "EMNINC", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+        <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+      </step>
+    </branch>
+
+    <branch>
+      <step id="check-impl-proprc">
+        Now check PROPRC for {{input:target}}.
+
+        Respond with JSON: {"check": "PROPRC", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+        <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+      </step>
+    </branch>
+
+    <branch>
+      <step id="check-impl-uefsns">
+        Now check UEFSNS for {{input:target}}.
+
+        Respond with JSON: {"check": "UEFSNS", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+        <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+      </step>
+    </branch>
+
+    <branch>
+      <step id="check-impl-dpapi">
+        Now check DPAPI for {{input:target}}.
+
+        Respond with JSON: {"check": "DPAPI", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+        <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+      </step>
+    </branch>
+
+    <branch>
+      <step id="check-impl-abps">
+        Now check ABPS for {{input:target}}.
+
+        Respond with JSON: {"check": "ABPS", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+        <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+      </step>
+    </branch>
+
+    <branch>
+      <step id="check-impl-pesoeer">
+        Now check PESOER for {{input:target}}.
+
+        Respond with JSON: {"check": "PESOER", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+        <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+      </step>
+    </branch>
+
+    <branch>
+      <sequence>
+      <step id="check-is-test">
+        Is {{input:target}} a test (e.g. a function with #[test], or in a #[cfg(test)] module)?
+
+        Respond with JSON: {"is_test": "is_test", "answer": "YES"|"NO"|"UNSURE"|"ERROR", "details": "explanation here"}
+
+        <format>{"type":"object","properties":{"is_test":{"type":"string"},"answer":{"type":"string","enum":["YES","NO","UNSURE","ERROR"]},"details":{"type":"string"}},"required":["is_test","answer","details"]}</format>
+      </step>
+      <switch on="answer">
+        <case if="NO" then="continue"/>
+        <case if="UNSURE" then="exit"/>
+        <case if="ERROR" then="exit"/>
+        <case if="YES">
+          <parallel-split>
+            <branch>
+              <step id="check-test-nctobpaop">
+                Now check NCTOBPAOP for {{input:target}}.
+
+                Respond with JSON: {"check": "NCTOBPAOP", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+                <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+              </step>
+            </branch>
+
+            <branch>
+              <step id="check-test-nricit">
+                Now check NRICIT for {{input:target}}.
+
+                Respond with JSON: {"check": "NRICIT", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+                <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+              </step>
+            </branch>
+          </parallel-split>
+        </case>
+      </switch>
+      </sequence>
+    </branch>
+  </parallel-split>
+
+  <step id="final-verdict">
+    {{prev}}
+
+    Based on all the check results above, provide a final verdict:
+    - If any check has status REJECT, respond with verdict "NEEDS_WORK"
+    - If any check has status QUESTION, respond with verdict "QUESTION"
+    - If all checks are PASS or NA, respond with verdict "APPROVED"
+
+    Respond with JSON: {"verdict": "APPROVED"|"NEEDS_WORK"|"QUESTION", "explanation here": "detailed explanation here"}
+
+    <format>{"type":"object","properties":{"verdict":{"type":"string","enum":["APPROVED","NEEDS_WORK","QUESTION"]},"explanation here":{"type":"string"}},"required":["verdict","explanation here"]}</format>
+  </step>
+</sequence>

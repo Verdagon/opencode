@@ -1,0 +1,65 @@
+<sequence>
+  <step id="read-guidelines">
+    Please read the following files to understand the guidelines for this codebase:
+    - {{file:zen/impl.md}}
+    - {{file:zen/testing.md}}
+
+    When you're ready, respond with JSON {"ready": true}. If something went wrong, respond with {"ready":false,"reason":"(your words here)"}.
+
+    <format>{"type":"object","properties":{"ready":{"type":"boolean"},"reason":{"type":"string"}},"required":["ready"]}</format>
+  </step>
+  <switch on="ready"><case if="true" then="continue"/><case if="false" then="exit"/></switch>
+
+  <step id="analyze-target">
+    Today we should pay attention to specifically this part: {{input:target}}.
+
+    Please look over that part right now, look at:
+
+     1. What it calls.
+     2. What types it's using.
+     3. What it's doing.
+     4. What it used to look like (use `git diff HEAD {its file}`).
+
+    When you're ready, respond with JSON {"ready": true}. If something went wrong, respond with {"ready":false,"reason":"(your words here)"}.
+
+    <format>{"type":"object","properties":{"ready":{"type":"boolean"},"reason":{"type":"string"}},"required":["ready"]}</format>
+  </step>
+  <switch on="ready"><case if="true" then="continue"/><case if="false" then="exit"/></switch>
+
+  <supervised max_attempts="3">
+    <action>
+      <step id="check-impl-uusnncb">
+        Now check UUSNNCB for {{input:target}}.
+
+        If there are violations, please include the file ane line number of the violation in your explanation.
+
+        Respond with JSON: {"check": "UUSNNCB", "status": "PASS"|"REJECT"|"QUESTION"|"NA", "details": "explanation here"}
+
+        <format>{"type":"object","properties":{"check":{"type":"string"},"status":{"type":"string","enum":["PASS","REJECT","QUESTION","NA"]},"details":{"type":"string"}},"required":["check","status","details"]}</format>
+      </step>
+    </action>
+    <supervisor>
+      <step id="supervisor-check-impl-uusnncb">
+        Below is a report from someone who we don't really trust.
+
+        They're checking for UUSNNCB violations in {{input:target}}. For details on UUSNNCB, see:
+        - {{file:zen/impl.md}}
+        - {{file:zen/testing.md}}
+
+        First, please look into their findings.
+
+        Respond REJECT if there are any inaccuracies in their findings. Respond APPROVE if it's largely correct.
+
+        Respond with JSON: {"result": "APPROVED"|"REJECTED", "details": "explanation here"}
+
+        Their report:
+
+        --------
+
+        {{prev}}
+
+        <format>{"type":"object","properties":{"result":{"type":"string","enum":["APPROVED","REJECTED"]},"details":{"type":"string"}},"required":["result","details"]}</format>
+      </step>
+    </supervisor>
+  </supervised>
+</sequence>

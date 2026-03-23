@@ -261,6 +261,10 @@ export namespace LSP {
     return result
   }
 
+  export async function clientsForFile(file: string) {
+    return getClients(file)
+  }
+
   export async function hasClients(file: string) {
     const s = await state()
     const extension = path.parse(file).ext || file

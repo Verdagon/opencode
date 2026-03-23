@@ -39,6 +39,7 @@ import { HTTPException } from "hono/http-exception"
 import { errors } from "./error"
 import { Filesystem } from "@/util/filesystem"
 import { QuestionRoutes } from "./routes/question"
+import { LspRoutes } from "./routes/lsp"
 import { PermissionRoutes } from "./routes/permission"
 import { GlobalRoutes } from "./routes/global"
 import { MDNS } from "./mdns"
@@ -251,6 +252,7 @@ export namespace Server {
       .route("/", EventRoutes())
       .route("/mcp", McpRoutes())
       .route("/tui", TuiRoutes())
+      .route("/lsp", LspRoutes())
       .post(
         "/instance/dispose",
         describeRoute({

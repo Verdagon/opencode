@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "external_directory": {
+      "src/**": "allow",
+      "zen/**": "allow"
+    },
+    "read": {
+      ".git/**": "deny",
+      "src/**": "allow",
+      "zen/**": "allow"
+    },
+    "edit": {
+      "src/**": "allow",
+      "zen/**": "deny",
+      ".git/**": "deny"
+    }
+  }
+}

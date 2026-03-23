@@ -1,0 +1,24 @@
+# Rust
+/target
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.dll
+auditor-history
+barrel_o_monkeys-history/
+rabble-history/
+api_key.txt
