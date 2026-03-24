@@ -278,17 +278,49 @@ export namespace LSP {
     return false
   }
 
+  // --- Global LSP mutex ---
+  //
+  // All functions below that send requests or notifications to LSP servers
+  // acquire this lock. This ensures that context-defs (which pushes virtual
+  // content via didChange and reverts afterward) cannot run concurrently with
+  // normal LSP operations (which expect real disk content).
+  //
+  // When context-defs is not running, the lock is uncontended and operations
+  // proceed immediately (one microtask overhead).
+  //
+  // DO NOT add new functions that send LSP requests without acquiring this
+  // lock — either go through run()/runAll() or call withLspLock() directly.
+
+  let lspLock: Promise<void> = Promise.resolve()
+
+  export async function withLspLock<T>(fn: () => Promise<T>): Promise<T> {
+    let release: () => void
+    const prev = lspLock
+    lspLock = new Promise((r) => {
+      release = r
+    })
+    await prev
+    try {
+      return await fn()
+    } finally {
+      release!()
+    }
+  }
+
+  // Acquires the global LSP lock. See comment above.
   export async function touchFile(input: string, waitForDiagnostics?: boolean) {
-    log.info("touching file", { file: input })
-    const clients = await getClients(input)
-    await Promise.all(
-      clients.map(async (client) => {
-        const wait = waitForDiagnostics ? client.waitForDiagnostics({ path: input }) : Promise.resolve()
-        await client.notify.open({ path: input })
-        return wait
-      }),
-    ).catch((err) => {
-      log.error("failed to touch file", { err, file: input })
+    return withLspLock(async () => {
+      log.info("touching file", { file: input })
+      const clients = await getClients(input)
+      await Promise.all(
+        clients.map(async (client) => {
+          const wait = waitForDiagnostics ? client.waitForDiagnostics({ path: input }) : Promise.resolve()
+          await client.notify.open({ path: input })
+          return wait
+        }),
+      ).catch((err) => {
+        log.error("failed to touch file", { err, file: input })
+      })
     })
   }
 
@@ -458,16 +490,22 @@ export namespace LSP {
     }).then((result) => result.flat().filter(Boolean))
   }
 
+  // Acquires the global LSP lock. See comment above withLspLock.
   async function runAll<T>(input: (client: LSPClient.Info) => Promise<T>): Promise<T[]> {
-    const clients = await state().then((x) => x.clients)
-    const tasks = clients.map((x) => input(x))
-    return Promise.all(tasks)
+    return withLspLock(async () => {
+      const clients = await state().then((x) => x.clients)
+      const tasks = clients.map((x) => input(x))
+      return Promise.all(tasks)
+    })
   }
 
+  // Acquires the global LSP lock. See comment above withLspLock.
   async function run<T>(file: string, input: (client: LSPClient.Info) => Promise<T>): Promise<T[]> {
-    const clients = await getClients(file)
-    const tasks = clients.map((x) => input(x))
-    return Promise.all(tasks)
+    return withLspLock(async () => {
+      const clients = await getClients(file)
+      const tasks = clients.map((x) => input(x))
+      return Promise.all(tasks)
+    })
   }
 
   export namespace Diagnostic {

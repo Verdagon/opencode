@@ -39,8 +39,6 @@ const ContextDefsResultSchema = z
   })
   .meta({ ref: "ContextDefsResult" })
 
-// Track which clients have been waited on for initial indexing
-const readyClients = new WeakSet<object>()
 
 /**
  * Create a ContentPusher that uses the LSPClient's notify.change method,
@@ -107,11 +105,9 @@ export const LspRoutes = lazy(() =>
             continue
           }
 
-          // Wait for initial indexing on first use of this client
-          if (!readyClients.has(client)) {
-            await ContextDefs.waitForServerReady(client.connection, 10000)
-            readyClients.add(client)
-          }
+          // Wait for initial indexing — happens outside the LSP lock
+          // so we don't block other operations for 10 seconds
+          await ContextDefs.waitForServerReady(client.connection, 10000)
 
           // Read current file from disk
           let diskContent: string

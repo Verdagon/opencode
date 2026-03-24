@@ -1,5 +1,6 @@
 import { pathToFileURL } from "url"
 import { LANGUAGE_EXTENSIONS } from "./language"
+import { LSP } from "./index"
 
 export namespace ContextDefs {
   export interface SemanticToken {
@@ -655,28 +656,8 @@ export namespace ContextDefs {
     return result
   }
 
-  // --- Per-document mutex ---
-
-  const documentLocks = new Map<string, Promise<void>>()
-
-  export async function withDocumentLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
-    const key = filePath
-    const previous = documentLocks.get(key) ?? Promise.resolve()
-    let release: () => void
-    const lock = new Promise<void>((r) => {
-      release = r
-    })
-    documentLocks.set(key, lock)
-    await previous
-    try {
-      return await fn()
-    } finally {
-      release!()
-      if (documentLocks.get(key) === lock) {
-        documentLocks.delete(key)
-      }
-    }
-  }
+  // Per-document mutex removed — replaced by global LSP.withLspLock() in index.ts.
+  // All LSP operations (including context-defs) go through that single lock.
 
   // --- Progress tracking ---
 
@@ -724,11 +705,15 @@ export namespace ContextDefs {
    * Create a ContentPusher from a raw vscode-jsonrpc connection.
    * Tracks open state per-connection to avoid duplicate didOpen.
    */
-  export function rawConnectionPusher(conn: any): ContentPusher {
+  export interface ContentPusherWithRevert extends ContentPusher {
+    revert(): Promise<void>
+  }
+
+  export function rawConnectionPusher(conn: any): ContentPusherWithRevert {
     const opened = new Set<string>()
     let version = 1000
 
-    return async (filePath: string, content: string) => {
+    const push: ContentPusherWithRevert = async (filePath: string, content: string) => {
       const uri = pathToFileURL(filePath).href
       const ext = require("path").extname(filePath)
       const languageId = LANGUAGE_EXTENSIONS[ext] ?? "plaintext"
@@ -745,6 +730,17 @@ export namespace ContextDefs {
         opened.add(uri)
       }
     }
+
+    push.revert = async () => {
+      for (const uri of opened) {
+        await conn
+          .sendNotification("textDocument/didClose", { textDocument: { uri } })
+          .catch(() => {})
+      }
+      opened.clear()
+    }
+
+    return push
   }
 
   /**
@@ -829,46 +825,55 @@ export namespace ContextDefs {
       beforeHunkRanges,
       afterHunkRanges,
     } = input
-    const pushContent = input.pushContent ?? rawConnectionPusher(conn)
+    const pusher = (input.pushContent as ContentPusherWithRevert | undefined) ?? rawConnectionPusher(conn)
     const allDefs: SymbolDefinition[] = []
     let enrichErrors: string[] = []
 
-    await withDocumentLock(filePath, async () => {
-      // Push initial content
-      await pushContent(filePath, originalContent)
+    // Acquire the global LSP lock. While held, no other LSP operation
+    // (touchFile, hover, definition, etc.) can run, ensuring they never
+    // see our virtual content. We revert before releasing.
+    await LSP.withLspLock(async () => {
+      try {
+        // Push initial content
+        await pusher(filePath, originalContent)
 
-      // Before-side analysis
-      if (originalContent && beforeHunkRanges.some((h) => h.end > h.start)) {
-        const defs = await analyzeOneSide({
-          conn,
-          pushContent,
-          fileUri,
-          filePath,
-          content: originalContent,
-          hunkRanges: beforeHunkRanges,
-          legend,
-        })
-        allDefs.push(...defs)
+        // Before-side analysis
+        if (originalContent && beforeHunkRanges.some((h) => h.end > h.start)) {
+          const defs = await analyzeOneSide({
+            conn,
+            pushContent: pusher,
+            fileUri,
+            filePath,
+            content: originalContent,
+            hunkRanges: beforeHunkRanges,
+            legend,
+          })
+          allDefs.push(...defs)
+        }
+
+        // After-side analysis
+        if (patchedContent && afterHunkRanges.some((h) => h.end > h.start)) {
+          const defs = await analyzeOneSide({
+            conn,
+            pushContent: pusher,
+            fileUri,
+            filePath,
+            content: patchedContent,
+            hunkRanges: afterHunkRanges,
+            legend,
+          })
+          allDefs.push(...defs)
+        }
+
+        // Enrich definitions with full text, doc comments, and end positions.
+        enrichErrors = await enrichDefinitions(conn, allDefs, filePath)
+      } finally {
+        // Revert: close all files we opened so the LSP server forgets
+        // our virtual content and returns to its normal indexed state.
+        if ("revert" in pusher) {
+          await (pusher as ContentPusherWithRevert).revert()
+        }
       }
-
-      // After-side analysis
-      if (patchedContent && afterHunkRanges.some((h) => h.end > h.start)) {
-        const defs = await analyzeOneSide({
-          conn,
-          pushContent,
-          fileUri,
-          filePath,
-          content: patchedContent,
-          hunkRanges: afterHunkRanges,
-          legend,
-        })
-        allDefs.push(...defs)
-      }
-
-      // Enrich definitions with full text, doc comments, and end positions.
-      // Runs inside the mutex so that documentSymbol on the analyzed file
-      // sees consistent content.
-      enrichErrors = await enrichDefinitions(conn, allDefs, filePath)
     })
 
     // Deduplicate
