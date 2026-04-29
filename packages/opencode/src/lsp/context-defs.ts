@@ -192,6 +192,25 @@ export namespace ContextDefs {
     return lines.slice(startLine, end).join("\n")
   }
 
+  /**
+   * Extract only the signature of a function/method, stopping at the opening `{`.
+   * Falls back to the full range if no `{` is found (e.g. trait method declarations).
+   */
+  export function extractSignatureText(
+    lines: string[],
+    startLine: number,
+    endLine: number,
+  ): string {
+    if (startLine > endLine) return ""
+    const end = Math.min(endLine + 1, lines.length)
+    for (let i = startLine; i < end; i++) {
+      if (lines[i].includes("{")) {
+        return lines.slice(startLine, i + 1).join("\n")
+      }
+    }
+    return lines.slice(startLine, end).join("\n")
+  }
+
   // --- Diff parsing ---
 
   export interface DiffHunk {
@@ -615,12 +634,25 @@ export namespace ContextDefs {
       const allSymbols = flattenNormalized(normalizedSymbols)
 
       for (const def of defs) {
-        // Find the enclosing symbol whose range contains the definition position
-        const enclosing = allSymbols.find(
-          (sym) =>
+        // Find the tightest enclosing symbol whose range contains the definition position.
+        // In hierarchical DocumentSymbol format a parent (e.g. an `impl` block) also
+        // contains the child's range, so the first match would be the parent. We want
+        // the smallest range so we pick the actual method/struct/etc. instead.
+        let enclosing: NormalizedSymbol | undefined
+        for (const sym of allSymbols) {
+          if (
             def.definedIn.line >= sym.range.start.line &&
-            def.definedIn.line <= sym.range.end.line,
-        )
+            def.definedIn.line <= sym.range.end.line
+          ) {
+            if (
+              !enclosing ||
+              sym.range.end.line - sym.range.start.line <
+                enclosing.range.end.line - enclosing.range.start.line
+            ) {
+              enclosing = sym
+            }
+          }
+        }
 
         if (enclosing) {
           const endChar = (enclosing.range.end as any).character
@@ -631,11 +663,18 @@ export namespace ContextDefs {
           }
           def.definedIn.endLine = enclosing.range.end.line
           def.definedIn.endCharacter = endChar
-          def.definitionText = extractDefinitionText(
-            fileLines,
-            enclosing.range.start.line,
-            enclosing.range.end.line,
-          )
+          const isFn = enclosing.kind === 6 || enclosing.kind === 12
+          def.definitionText = isFn
+            ? extractSignatureText(
+                fileLines,
+                enclosing.range.start.line,
+                enclosing.range.end.line,
+              )
+            : extractDefinitionText(
+                fileLines,
+                enclosing.range.start.line,
+                enclosing.range.end.line,
+              )
           def.docComment = extractDocComment(fileLines, enclosing.range.start.line)
         } else {
           // No enclosing symbol found — extract docComment from the definition line

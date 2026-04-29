@@ -987,6 +987,57 @@ describe("extractDefinitionText", () => {
   })
 })
 
+describe("extractSignatureText", () => {
+  test("106. single-line function", () => {
+    const lines = ["fn foo() {}", "fn bar() {}"]
+    expect(ContextDefs.extractSignatureText(lines, 0, 0)).toBe("fn foo() {}")
+  })
+
+  test("107. multi-line params", () => {
+    const lines = [
+      "fn foo(",
+      "  x: i32,",
+      ") -> bool {",
+      "  true",
+      "}",
+    ]
+    expect(ContextDefs.extractSignatureText(lines, 0, 4)).toBe(
+      "fn foo(\n  x: i32,\n) -> bool {",
+    )
+  })
+
+  test("108. where clause", () => {
+    const lines = [
+      "fn foo<T>(x: T)",
+      "where",
+      "  T: Display,",
+      "{",
+      "  println!()",
+      "}",
+    ]
+    expect(ContextDefs.extractSignatureText(lines, 0, 5)).toBe(
+      "fn foo<T>(x: T)\nwhere\n  T: Display,\n{",
+    )
+  })
+
+  test("109. no opening brace returns full range", () => {
+    const lines = [
+      "fn foo();",
+      "fn bar() {}",
+    ]
+    expect(ContextDefs.extractSignatureText(lines, 0, 0)).toBe("fn foo();")
+  })
+
+  test("110. returns empty string if startLine > endLine", () => {
+    expect(ContextDefs.extractSignatureText([], 5, 3)).toBe("")
+  })
+
+  test("111. handles out-of-bounds endLine", () => {
+    const lines = ["fn foo() {", "  1", "}"]
+    expect(ContextDefs.extractSignatureText(lines, 0, 100)).toBe("fn foo() {")
+  })
+})
+
 describe("extractDocComment edge cases", () => {
   test("100. #[derive] between /// comment and def stops collection", () => {
     const lines = [

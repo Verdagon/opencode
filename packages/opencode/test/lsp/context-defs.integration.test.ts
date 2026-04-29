@@ -416,7 +416,7 @@ describe("context-defs integration (rust-analyzer)", () => {
       expect(symbols).toContain("String")
     }, 60_000)
 
-    test("E1. enrichment: definitionText contains full function body", async () => {
+    test("E1. enrichment: definitionText contains signature for functions", async () => {
       const { filePath, fileUri } = filePaths("src/game.rs")
       const original = await fixtureFile("src/game.rs")
       const origLines = original.split("\n")
@@ -434,15 +434,21 @@ describe("context-defs integration (rust-analyzer)", () => {
         afterHunkRanges: [{ start: methodLine, end: methodLine + 3 }],
       })
 
-      // Find a definition that points to a project file (not stdlib)
-      const projectDef = result.find(
-        (d) => d.definedIn.path.includes("src/") && d.definitionText !== null,
+      // Find a function/method definition that points to a project file (not stdlib)
+      const fnDef = result.find(
+        (d) =>
+          d.definedIn.path.includes("src/")
+          && d.definitionText !== null
+          && (d.tokenType === "function" || d.tokenType === "method"),
       )
-      if (projectDef) {
-        expect(projectDef.definitionText).toBeTruthy()
-        expect(projectDef.definitionText!.length).toBeGreaterThan(10)
-        expect(projectDef.definedIn.endLine).not.toBeNull()
-        expect(projectDef.definedIn.endLine!).toBeGreaterThanOrEqual(projectDef.definedIn.line)
+      if (fnDef) {
+        expect(fnDef.definitionText).toBeTruthy()
+        expect(fnDef.definitionText!.length).toBeGreaterThan(10)
+        // Signature-only: should not exceed 10 lines
+        const lineCount = fnDef.definitionText!.split("\n").length
+        expect(lineCount).toBeLessThanOrEqual(10)
+        expect(fnDef.definedIn.endLine).not.toBeNull()
+        expect(fnDef.definedIn.endLine!).toBeGreaterThanOrEqual(fnDef.definedIn.line)
       }
     }, 60_000)
 
@@ -648,6 +654,34 @@ impl Tile {
           expect(stringDef.definitionText).toContain("String")
         }
       }
+    }, 60_000)
+
+    test("E9. enrichment: definitionText is signature-only for functions", async () => {
+      const { filePath, fileUri } = filePaths("src/game.rs")
+      const original = await fixtureFile("src/game.rs")
+      const origLines = original.split("\n")
+      const methodLine = origLines.findIndex((l) => l.includes("fn add_entity_to_level"))
+
+      const patched = original.replace(
+        "fn add_entity_to_level",
+        "fn add_entity_to_level /* modified */",
+      )
+
+      const result = await analyze({
+        conn, legend, filePath, fileUri,
+        originalContent: original, patchedContent: patched,
+        beforeHunkRanges: [{ start: methodLine, end: methodLine + 5 }],
+        afterHunkRanges: [{ start: methodLine, end: methodLine + 5 }],
+      })
+
+      // Entity::new is a cross-file method referenced in the hunk
+      const newDef = result.find(
+        (d) => d.symbol === "new" && (d.tokenType === "method" || d.tokenType === "function"),
+      )
+      expect(newDef).toBeDefined()
+      expect(newDef!.definitionText).toContain("pub fn new(")
+      // Body contains `chase_target: None` — should NOT appear in signature-only output
+      expect(newDef!.definitionText).not.toContain("chase_target: None")
     }, 60_000)
 
     test("99. empty content returns empty results", async () => {
