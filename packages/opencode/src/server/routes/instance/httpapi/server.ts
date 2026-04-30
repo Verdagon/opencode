@@ -1,44 +1,45 @@
 import { Context, Effect, Layer } from "effect"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { HttpMiddleware, HttpRouter, HttpServer } from "effect/unstable/http"
+import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Socket from "effect/unstable/socket/Socket"
 import { Account } from "@/account/account"
 import { Agent } from "@/agent/agent"
 import { Auth } from "@/auth"
 import { Bus } from "@/bus"
-import { Config } from "@/config/config"
 import { Command } from "@/command"
-import * as Observability from "@opencode-ai/core/effect/observability"
+import { Config } from "@/config/config"
+import { Workspace } from "@/control-plane/workspace"
 import { File } from "@/file"
 import { Ripgrep } from "@/file/ripgrep"
 import { Format } from "@/format"
+import { Installation } from "@/installation"
 import { LSP } from "@/lsp/lsp"
 import { MCP } from "@/mcp"
 import { Permission } from "@/permission"
-import { Installation } from "@/installation"
 import { Project } from "@/project/project"
+import { Vcs } from "@/project/vcs"
 import { ProviderAuth } from "@/provider/auth"
 import { Provider } from "@/provider/provider"
 import { Pty } from "@/pty"
 import { Question } from "@/question"
-import { Session } from "@/session/session"
 import { SessionCompaction } from "@/session/compaction"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionRevert } from "@/session/revert"
 import { SessionRunState } from "@/session/run-state"
+import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { Todo } from "@/session/todo"
+import { isAllowedCorsOrigin } from "@/server/cors"
+import * as ServerBackend from "@/server/backend"
 import { SessionShare } from "@/share/session"
 import { Skill } from "@/skill"
 import { ToolRegistry } from "@/tool/registry"
 import { lazy } from "@/util/lazy"
-import { Vcs } from "@/project/vcs"
 import { Worktree } from "@/worktree"
-import { Workspace } from "@/control-plane/workspace"
-import { isAllowedCorsOrigin } from "@/server/cors"
+import { memoMap } from "@opencode-ai/core/effect/memo-map"
+import * as Observability from "@opencode-ai/core/effect/observability"
 import { InstanceHttpApi, RootHttpApi } from "./api"
-import { ServerAuthConfig, authorizationLayer } from "./middleware/authorization"
 import { eventRoute } from "./event"
 import { configHandlers } from "./handlers/config"
 import { controlHandlers } from "./handlers/control"
@@ -56,11 +57,11 @@ import { sessionHandlers } from "./handlers/session"
 import { syncHandlers } from "./handlers/sync"
 import { tuiHandlers } from "./handlers/tui"
 import { workspaceHandlers } from "./handlers/workspace"
+import { disposeMiddleware } from "./lifecycle"
+import { ServerAuthConfig, authorizationLayer } from "./middleware/authorization"
 import { instanceContextLayer, instanceRouterMiddleware } from "./middleware/instance-context"
 import { workspaceRouterMiddleware, workspaceRoutingLayer } from "./middleware/workspace-routing"
-import { disposeMiddleware } from "./lifecycle"
-import { memoMap } from "@opencode-ai/core/effect/memo-map"
-import * as ServerBackend from "@/server/backend"
+import { V2Api, v2Handlers } from "./v2"
 
 export const context = Context.makeUnsafe<unknown>(new Map())
 
@@ -101,6 +102,7 @@ const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
     workspaceHandlers,
   ]),
 )
+const v2ApiRoutes = HttpApiBuilder.layer(V2Api).pipe(Layer.provide(v2Handlers))
 
 const rawInstanceRoutes = Layer.mergeAll(eventRoute, ptyConnectRoute).pipe(
   Layer.provide(
@@ -109,7 +111,7 @@ const rawInstanceRoutes = Layer.mergeAll(eventRoute, ptyConnectRoute).pipe(
       .layer.pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal)),
   ),
 )
-const instanceRoutes = Layer.mergeAll(rawInstanceRoutes, instanceApiRoutes).pipe(
+const instanceRoutes = Layer.mergeAll(rawInstanceRoutes, instanceApiRoutes, v2ApiRoutes).pipe(
   Layer.provide([
     authorizationLayer.pipe(Layer.provide(ServerAuthConfig.defaultLayer)),
     workspaceRoutingLayer.pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal)),
