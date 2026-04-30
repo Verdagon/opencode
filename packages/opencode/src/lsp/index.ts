@@ -290,6 +290,9 @@ export namespace LSP {
   //
   // DO NOT add new functions that send LSP requests without acquiring this
   // lock — either go through run()/runAll() or call withLspLock() directly.
+  //
+  // Note: this lock serializes opencode callers but does NOT synchronize
+  // rust-analyzer's internal Salsa reanalysis (see @RAPNAZ).
 
   let lspLock: Promise<void> = Promise.resolve()
 

@@ -79,6 +79,28 @@ export namespace LSPClient {
     ])
     connection.listen()
 
+    // Per @RAPNAZ, $/progress events fire right after `initialized` — before any HTTP request
+    // arrives. The listener must be registered here, not per-request, and idle state must be
+    // accumulated on the client so callers can check it without registering new listeners.
+    const activeProgress = new Set<string>()
+    const idleWaiters: Array<() => void> = []
+    // hasSeenProgressBegin guards against falsely reporting idle on a fresh connection
+    // that has not yet started its initial indexing cycle (per @RAPNAZ).
+    let hasSeenProgressBegin = false
+    connection.onNotification("$/progress", (params: any) => {
+      if (params.value?.kind === "begin") {
+        hasSeenProgressBegin = true
+        activeProgress.add(String(params.token))
+      }
+      if (params.value?.kind === "end") {
+        activeProgress.delete(String(params.token))
+        if (hasSeenProgressBegin && activeProgress.size === 0) {
+          const waiters = idleWaiters.splice(0)
+          for (const resolve of waiters) resolve()
+        }
+      }
+    })
+
     l.info("sending initialize")
     const initResult: any = await withTimeout(
       connection.sendRequest("initialize", {
@@ -277,6 +299,13 @@ export namespace LSPClient {
             if (debounceTimer) clearTimeout(debounceTimer)
             unsub?.()
           })
+      },
+      // Per @RAPNAZ, hasSeenProgressBegin prevents falsely reporting idle on a fresh connection
+      // that has not yet started its initial indexing cycle.
+      isIdle: () => hasSeenProgressBegin && activeProgress.size === 0,
+      whenIdle(): Promise<void> {
+        if (hasSeenProgressBegin && activeProgress.size === 0) return Promise.resolve()
+        return new Promise<void>((resolve) => idleWaiters.push(resolve))
       },
       async shutdown() {
         l.info("shutting down")

@@ -1,6 +1,7 @@
 import { pathToFileURL } from "url"
 import { LANGUAGE_EXTENSIONS } from "./language"
 import { LSP } from "./index"
+import type { LSPClient } from "./client"
 
 export namespace ContextDefs {
   export interface SemanticToken {
@@ -541,7 +542,8 @@ export namespace ContextDefs {
       ),
     )
 
-    // Resolve all definitions in parallel
+    // Resolve all definitions in parallel. Per @RAPNAZ, these sendRequests can throw
+    // ContentModified (-32801); the outer analyzeOneSide retry loop catches and retries.
     const tokenTexts = inScope.map((t) => extractSymbolText(t, fileContent))
     const defResults = await Promise.all(
       inScope.map((token) =>
@@ -701,33 +703,16 @@ export namespace ContextDefs {
   // --- Progress tracking ---
 
   /**
-   * Wait for an LSP server to become idle by monitoring $/progress notifications.
-   * Falls back to a timeout if no progress events are received.
+   * Wait for an LSP server to finish any in-progress indexing.
+   * Uses the persistent $/progress state tracked by LSPClient since connection startup.
+   * Registering a listener here instead would miss events that already fired (see @RAPNAZ).
    */
-  export async function waitForServerReady(conn: any, maxMs: number = 10000): Promise<void> {
-    const activeProgress = new Set<string>()
-    let unsub: (() => void) | undefined
-
-    try {
-      unsub = conn.onNotification("$/progress", (params: any) => {
-        if (params.value?.kind === "begin") activeProgress.add(String(params.token))
-        if (params.value?.kind === "end") activeProgress.delete(String(params.token))
-      })?.dispose
-
-      const start = Date.now()
-
-      // Wait for at least one progress to start (server may not have started indexing yet)
-      while (activeProgress.size === 0 && Date.now() - start < Math.min(maxMs, 3000)) {
-        await new Promise((r) => setTimeout(r, 100))
-      }
-
-      // Wait for all active progress to complete
-      while (activeProgress.size > 0 && Date.now() - start < maxMs) {
-        await new Promise((r) => setTimeout(r, 200))
-      }
-    } finally {
-      unsub?.()
-    }
+  export async function waitForServerReady(client: LSPClient.Info, maxMs: number = 10000): Promise<void> {
+    if (client.isIdle()) return
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`LSP server not ready after ${maxMs}ms`)), maxMs),
+    )
+    await Promise.race([client.whenIdle(), timeout])
   }
 
   // --- Full pipeline ---
@@ -808,30 +793,35 @@ export namespace ContextDefs {
         await new Promise((r) => setTimeout(r, delays[attempt - 1]))
       }
 
-      const [symbols, tokensResult] = await Promise.all([
-        conn.sendRequest("textDocument/documentSymbol", { textDocument: { uri: fileUri } }),
-        conn.sendRequest("textDocument/semanticTokens/full", { textDocument: { uri: fileUri } }),
-      ])
+      try {
+        // Per @RAPNAZ, any sendRequest here can throw ContentModified (-32801) if rust-analyzer
+        // is still processing the preceding didChange. The catch below covers the entire body.
+        const [symbols, tokensResult] = await Promise.all([
+          conn.sendRequest("textDocument/documentSymbol", { textDocument: { uri: fileUri } }),
+          conn.sendRequest("textDocument/semanticTokens/full", { textDocument: { uri: fileUri } }),
+        ])
 
-      if (!tokensResult?.data || tokensResult.data.length === 0) continue
+        if (!tokensResult?.data || tokensResult.data.length === 0) continue
 
-      const enclosingDefs = findEnclosingDefinitions(symbols, hunkRanges)
-      if (enclosingDefs.length === 0) {
-        return []
+        const enclosingDefs = findEnclosingDefinitions(symbols, hunkRanges)
+        if (enclosingDefs.length === 0) return []
+
+        const tokens = decodeSemanticTokens(tokensResult.data, legend)
+        const defs = await resolveTokenDefinitions({
+          conn,
+          fileUri,
+          filePath,
+          fileContent: content,
+          tokens,
+          enclosingDefs,
+          legend,
+        })
+
+        if (defs.length > 0 || attempt >= 2) return defs
+      } catch (err: any) {
+        if (err?.code === -32801) continue // ContentModified (-32801): treat as "not ready yet" per @RAPNAZ
+        throw err
       }
-
-      const tokens = decodeSemanticTokens(tokensResult.data, legend)
-      const defs = await resolveTokenDefinitions({
-        conn,
-        fileUri,
-        filePath,
-        fileContent: content,
-        tokens,
-        enclosingDefs,
-        legend,
-      })
-
-      if (defs.length > 0 || attempt >= 2) return defs
     }
 
     throw new Error(

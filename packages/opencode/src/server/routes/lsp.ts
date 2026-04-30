@@ -105,9 +105,10 @@ export const LspRoutes = lazy(() =>
             continue
           }
 
-          // Wait for initial indexing — happens outside the LSP lock
-          // so we don't block other operations for 10 seconds
-          await ContextDefs.waitForServerReady(client.connection, 10000)
+          // Wait for initial indexing — happens outside the LSP lock so we don't block other
+          // operations. Per @RAPNAZ, progress events arrive before any HTTP request, so this
+          // returns immediately once indexing is complete.
+          await ContextDefs.waitForServerReady(client, 60000)
 
           // Read current file from disk
           let diskContent: string
