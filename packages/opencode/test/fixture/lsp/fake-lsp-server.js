@@ -69,6 +69,21 @@ function handle(raw) {
     if (method) sendRequest(method, {})
     return
   }
+  if (data.method === "test/progress") {
+    // Emit a server->client $/progress notification with the given token/kind
+    // ("begin" | "report" | "end") so tests can drive the client's progress tracker.
+    const token = data.params && data.params.token
+    const kind = data.params && data.params.kind
+    send({ jsonrpc: "2.0", method: "$/progress", params: { token, value: { kind } } })
+    return
+  }
+  if (data.method === "test/server-status") {
+    // Emit a server->client experimental/serverStatus notification (rust-analyzer's readiness
+    // signal) with the given quiescent flag, so tests can drive the client's quiescent tracker.
+    const quiescent = data.params && data.params.quiescent
+    send({ jsonrpc: "2.0", method: "experimental/serverStatus", params: { quiescent, health: "ok" } })
+    return
+  }
   if (typeof data.id !== "undefined") {
     // Respond OK to any request from client to keep transport flowing
     send({ jsonrpc: "2.0", id: data.id, result: null })

@@ -704,15 +704,53 @@ export namespace ContextDefs {
 
   /**
    * Wait for an LSP server to finish any in-progress indexing.
-   * Uses the persistent $/progress state tracked by LSPClient since connection startup.
-   * Registering a listener here instead would miss events that already fired (see @RAPNAZ).
+   *
+   * Readiness signal: prefer rust-analyzer's authoritative `experimental/serverStatus` — `quiescent:
+   * true` means VFS loading is done and no build-data fetches are pending. For servers that don't
+   * emit serverStatus (other LSPs, the test fake) we fall back to the $/progress-idle heuristic.
+   * Gating rust-analyzer on `quiescent` — not on idle — is what stops a transient inter-phase idle
+   * (activeProgress momentarily draining to zero between startup phases) from reading as "ready".
+   *
+   * Not a flat deadline: wait indefinitely AS LONG AS the server emits liveness signals ($/progress
+   * of any kind — rust-analyzer streams `report` events while indexing a large crate — or a
+   * serverStatus update). Only reject after `silenceMs` with zero signals while still not ready —
+   * the signature of a wedged server. A flat cap could not tell "busy indexing FrontendRust for two
+   * minutes" from "hung" and would sever legit work.
+   *
+   * Uses the persistent $/progress + serverStatus state tracked by LSPClient since connection
+   * startup; registering a listener here instead would miss events that already fired (see @RAPNAZ).
    */
-  export async function waitForServerReady(client: LSPClient.Info, maxMs: number = 10000): Promise<void> {
-    if (client.isIdle()) return
-    const timeout = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`LSP server not ready after ${maxMs}ms`)), maxMs),
-    )
-    await Promise.race([client.whenIdle(), timeout])
+  export async function waitForServerReady(client: LSPClient.Info, silenceMs: number = 10000): Promise<void> {
+    const isReady = () => (client.hasSeenServerStatus() ? client.isQuiescent() : client.isIdle())
+    if (isReady()) return
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const silence = new Promise<"silence">((resolve) => {
+        timer = setTimeout(() => resolve("silence"), silenceMs)
+      })
+      try {
+        // NOTE: do NOT race client.whenIdle() here. It returns an already-resolved promise while
+        // the server is idle-but-not-quiescent (a transient inter-phase gap), which would spin this
+        // loop as a tight microtask cycle and starve the event loop so the next serverStatus/IO
+        // notification never gets processed. `whenNextProgress` and `whenServerStatus` only resolve
+        // on a NEW event, so they can't spin — and every idle transition coincides with a progress
+        // `end` event, so re-checking isReady() after each signal still detects the fallback's idle.
+        const outcome = await Promise.race([
+          client.whenNextProgress().then(() => "signal" as const),
+          client.whenServerStatus().then(() => "signal" as const),
+          silence,
+        ])
+        if (outcome === "signal") {
+          if (isReady()) return
+          continue // a liveness signal arrived but not ready yet — reset the silence window
+        }
+        // "silence": silenceMs elapsed with no progress / serverStatus / idle transition.
+        if (isReady()) return // final re-check closes the last race
+        throw new Error(`LSP server wedged: no progress for ${silenceMs}ms while not ready`)
+      } finally {
+        clearTimeout(timer)
+      }
+    }
   }
 
   // --- Full pipeline ---
@@ -784,15 +822,22 @@ export namespace ContextDefs {
     // Push content to LSP
     await pushContent(filePath, content)
 
-    // Retry loop: semantic tokens may appear before definitions resolve
-    // (e.g., server still indexing cross-file dependencies).
-    const delays = [50, 200, 500, 1500, 3000]
+    // Retry loop: semantic tokens may appear before definitions resolve (e.g. server still
+    // indexing cross-file dependencies). This is a deadline that RESETS on proof-of-life, not a
+    // fixed attempt budget: a `didChange` triggers a fresh Salsa reanalysis that, on a cold/large
+    // crate, routinely takes longer than a handful of fixed retries. Per @RAPNAZ, `-32801`
+    // (ContentModified) thrown from any sendRequest means RA is actively reanalyzing the pushed
+    // content — treat it as a heartbeat and extend the deadline (mirroring the silence-watchdog).
+    // Empty-but-no-error responses use capped backoff but do NOT extend the deadline (they may
+    // genuinely have no tokens; the deadline bounds that wait). Note: unlike waitForServerReady,
+    // we can't key off $/progress here — a single-file didChange frequently completes with no
+    // progress event — so -32801 is the correct per-edit liveness signal.
+    const settleMs = 10_000
+    let deadline = Date.now() + settleMs
+    let backoff = 50
+    let attempt = 0
 
-    for (let attempt = 0; attempt <= delays.length; attempt++) {
-      if (attempt > 0) {
-        await new Promise((r) => setTimeout(r, delays[attempt - 1]))
-      }
-
+    while (Date.now() < deadline) {
       try {
         // Per @RAPNAZ, any sendRequest here can throw ContentModified (-32801) if rust-analyzer
         // is still processing the preceding didChange. The catch below covers the entire body.
@@ -801,7 +846,12 @@ export namespace ContextDefs {
           conn.sendRequest("textDocument/semanticTokens/full", { textDocument: { uri: fileUri } }),
         ])
 
-        if (!tokensResult?.data || tokensResult.data.length === 0) continue
+        if (!tokensResult?.data || tokensResult.data.length === 0) {
+          attempt++
+          await new Promise((r) => setTimeout(r, backoff))
+          backoff = Math.min(backoff * 2, 1000)
+          continue
+        }
 
         const enclosingDefs = findEnclosingDefinitions(symbols, hunkRanges)
         if (enclosingDefs.length === 0) return []
@@ -817,15 +867,25 @@ export namespace ContextDefs {
           legend,
         })
 
+        // Preserve the prior heuristic: accept empty defs once we've tried a couple of times,
+        // otherwise retry (definitions may resolve after tokens first appear).
         if (defs.length > 0 || attempt >= 2) return defs
+        attempt++
+        await new Promise((r) => setTimeout(r, backoff))
+        backoff = Math.min(backoff * 2, 1000)
       } catch (err: any) {
-        if (err?.code === -32801) continue // ContentModified (-32801): treat as "not ready yet" per @RAPNAZ
+        if (err?.code === -32801) {
+          deadline = Date.now() + settleMs // proof RA is actively reanalyzing → extend the deadline
+          await new Promise((r) => setTimeout(r, backoff))
+          backoff = Math.min(backoff * 2, 1000)
+          continue
+        }
         throw err
       }
     }
 
     throw new Error(
-      `Failed to get semantic tokens for ${filePath} after ${delays.length + 1} attempts`,
+      `Failed to get semantic tokens for ${filePath} after ${settleMs}ms without progress`,
     )
   }
 

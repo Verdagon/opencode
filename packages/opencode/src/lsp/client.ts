@@ -87,7 +87,18 @@ export namespace LSPClient {
     // hasSeenProgressBegin guards against falsely reporting idle on a fresh connection
     // that has not yet started its initial indexing cycle (per @RAPNAZ).
     let hasSeenProgressBegin = false
+    // lastProgressAt / progressWaiters back the silence-watchdog: rust-analyzer holds a single
+    // work-done token open during a long index and streams `report` events with no begin/end,
+    // so `report` is the only per-second liveness heartbeat. We record every kind (incl. report)
+    // so a caller can tell "busy indexing" from "wedged" (per @RAPNAZ).
+    let lastProgressAt = 0
+    const progressWaiters: Array<() => void> = []
     connection.onNotification("$/progress", (params: any) => {
+      // Heartbeat first, for EVERY kind (begin | report | end).
+      lastProgressAt = Date.now()
+      const woken = progressWaiters.splice(0)
+      for (const resolve of woken) resolve()
+
       if (params.value?.kind === "begin") {
         hasSeenProgressBegin = true
         activeProgress.add(String(params.token))
@@ -99,6 +110,22 @@ export namespace LSPClient {
           for (const resolve of waiters) resolve()
         }
       }
+    })
+
+    // rust-analyzer's authoritative readiness signal (opt-in via the serverStatusNotification
+    // capability below). `quiescent: true` means VFS loading is done and no build-data fetches are
+    // in progress — i.e. analysis is ready. This is more precise than the $/progress-idle heuristic,
+    // which can't tell a transient gap between indexing phases from genuine completion. Servers that
+    // don't emit this (other LSPs, the test fake) leave sawServerStatus false and callers fall back
+    // to the idle heuristic.
+    let quiescent = false
+    let sawServerStatus = false
+    const serverStatusWaiters: Array<() => void> = []
+    connection.onNotification("experimental/serverStatus", (params: any) => {
+      sawServerStatus = true
+      quiescent = params?.quiescent === true
+      const woken = serverStatusWaiters.splice(0)
+      for (const resolve of woken) resolve()
     })
 
     l.info("sending initialize")
@@ -116,6 +143,11 @@ export namespace LSPClient {
           ...input.server.initialization,
         },
         capabilities: {
+          // Opt into rust-analyzer's experimental/serverStatus notifications so we can gate
+          // readiness on the authoritative `quiescent` flag rather than guessing from $/progress.
+          experimental: {
+            serverStatusNotification: true,
+          },
           window: {
             workDoneProgress: true,
           },
@@ -306,6 +338,22 @@ export namespace LSPClient {
       whenIdle(): Promise<void> {
         if (hasSeenProgressBegin && activeProgress.size === 0) return Promise.resolve()
         return new Promise<void>((resolve) => idleWaiters.push(resolve))
+      },
+      // ms since the last $/progress of ANY kind; Infinity if none seen yet. Backs the
+      // silence-watchdog's "is the server still making progress or wedged?" decision.
+      msSinceLastProgress: () => (lastProgressAt === 0 ? Infinity : Date.now() - lastProgressAt),
+      // One-shot: resolves on the next $/progress event of any kind (begin | report | end).
+      whenNextProgress(): Promise<void> {
+        return new Promise<void>((resolve) => progressWaiters.push(resolve))
+      },
+      // rust-analyzer's authoritative "analysis ready" flag from experimental/serverStatus.
+      isQuiescent: () => quiescent,
+      // Whether this server has ever emitted experimental/serverStatus. When false, the server
+      // doesn't support the signal and callers should fall back to the $/progress-idle heuristic.
+      hasSeenServerStatus: () => sawServerStatus,
+      // One-shot: resolves on the next experimental/serverStatus notification.
+      whenServerStatus(): Promise<void> {
+        return new Promise<void>((resolve) => serverStatusWaiters.push(resolve))
       },
       async shutdown() {
         l.info("shutting down")
