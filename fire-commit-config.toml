@@ -1,0 +1,22 @@
+# Pre-flight facts for opencode, a Guardian submodule. Unlike the other four, opencode is a
+# non-Rust monorepo (a fork Guardian shells out to) and tracks `verdagon-lsp-context-defs`, not
+# `main`. Read by `commit-preflight` when it composes Guardian's submodules.
+#
+# No test gate: opencode is not part of Guardian's cargo workspace, and its own JS/TS test suite
+# isn't wired into this pre-flight.
+external = []
+
+[repo]
+branch_model = "direct-push"
+tests = []
+
+[repo.sweeps]
+# The diff sweeps run on the staged diff (cheap) and stay on; opencode source rarely trips them.
+do_not_submit         = { enabled = true, allow = [] }
+absolute_paths        = { enabled = true, allow = [] }
+# Disabled: the broken-symlink check walks the whole tree (it can't read .gitignore, and its skip
+# list is fixed to .git/target), so it would churn through opencode's symlink-heavy node_modules.
+broken_symlinks       = { enabled = false, allow = [] }
+guardian_temp_disable = { enabled = true, allow = [] }
+test_delta            = { enabled = true, allow = [] }
+new_ignore            = { enabled = true, allow = [] }
