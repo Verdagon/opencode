@@ -9,6 +9,8 @@ external = []
 [repo]
 branch_model = "direct-push"
 tests = []
+# Non-Rust (JS) submodule; no cargo subprojects to discover.
+subproject_tests = { enabled = false, command = "", env = {} }
 
 [repo.sweeps]
 # The diff sweeps run on the staged diff (cheap) and stay on; opencode source rarely trips them.
